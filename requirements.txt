@@ -1,7 +1,7 @@
 Flask
 Werkzeug
 waitress
-google-generativeai
+google-genai
 requests
 urllib3
 python-dotenv
