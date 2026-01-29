@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Reddit RSS Bot v1.0.0
+Reddit RSS Bot v1.1.0
 ✅ Auto-posts to Reddit via RSS + IFTTT
 ✅ Google Gemini AI for title/description optimization
 ✅ Dynamic links to avoid spam detection
 ✅ Professional RSS feed generation
+✅ NEW: Browser spoofing to bypass rss.app detection
 """
 import os, sys, json, time, logging, hashlib, random
 from datetime import datetime, timedelta
@@ -19,7 +20,7 @@ from urllib.parse import urlparse, urlencode
 
 class Config:
     APP_NAME = "Reddit RSS Bot"
-    VERSION = "1.0.0"
+    VERSION = "1.1.0"
     FLASK_HOST = "0.0.0.0"
     FLASK_PORT = int(os.getenv("PORT", 10000))
     
@@ -49,6 +50,25 @@ class Config:
     # Self-ping
     SELF_PING_ENABLED = True
     SELF_PING_INTERVAL = 840  # 14 minutes
+    
+    # Browser Spoofing - Realistic Chrome headers
+    BROWSER_HEADERS = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0',
+        'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"'
+    }
 
 def setup_logging():
     logger = logging.getLogger(Config.APP_NAME)
@@ -78,6 +98,54 @@ def setup_logging():
     return logger
 
 logger = setup_logging()
+
+class BrowserSession:
+    """Manages realistic browser session with spoofing"""
+    
+    def __init__(self):
+        self.session = requests.Session()
+        self._setup_session()
+        logger.info("✅ Browser session initialized (Chrome spoofing)")
+    
+    def _setup_session(self):
+        """Setup session to mimic real Chrome browser"""
+        # Set default headers
+        self.session.headers.update(Config.BROWSER_HEADERS)
+        
+        # Enable automatic cookie handling
+        self.session.cookies.set_policy(requests.cookies.DefaultCookiePolicy())
+        
+        # Configure connection pooling for realistic behavior
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=10,
+            pool_maxsize=20,
+            max_retries=3,
+            pool_block=False
+        )
+        self.session.mount('http://', adapter)
+        self.session.mount('https://', adapter)
+    
+    def get(self, url: str, **kwargs) -> requests.Response:
+        """GET request with browser spoofing"""
+        # Add referer for realistic browsing pattern
+        if 'headers' not in kwargs:
+            kwargs['headers'] = {}
+        
+        # Simulate coming from Google search
+        kwargs['headers']['Referer'] = 'https://www.google.com/'
+        
+        # Random delay to mimic human behavior (0.5-2 seconds)
+        time.sleep(random.uniform(0.5, 2.0))
+        
+        # Make request
+        response = self.session.get(url, **kwargs)
+        
+        logger.debug(f"🌐 Browser request: {url} → {response.status_code}")
+        return response
+    
+    def close(self):
+        """Close session"""
+        self.session.close()
 
 class GeminiOptimizer:
     """Google Gemini AI for content optimization"""
@@ -118,7 +186,7 @@ Return ONLY the optimized title, nothing else.'''
             if len(optimized) > 250:
                 optimized = optimized[:247] + "..."
             
-            logger.info(f"✅ Title optimized: '{original_title}' → '{optimized}'")
+            logger.info(f"✅ Title optimized: '{original_title[:30]}...' → '{optimized[:30]}...'")
             return optimized
             
         except Exception as e:
@@ -166,17 +234,39 @@ class RSSFeedProcessor:
     
     def __init__(self, gemini_optimizer: GeminiOptimizer):
         self.optimizer = gemini_optimizer
+        self.browser = BrowserSession()
         self.cache = None
         self.cache_time = None
     
     def fetch_original_feed(self) -> Optional[str]:
-        """Fetch original RSS feed"""
+        """Fetch original RSS feed with browser spoofing"""
         try:
-            logger.info(f"📡 Fetching RSS from: {Config.ORIGINAL_RSS_URL}")
-            response = requests.get(Config.ORIGINAL_RSS_URL, timeout=15)
+            logger.info(f"📡 Fetching RSS (as Chrome browser): {Config.ORIGINAL_RSS_URL}")
+            
+            # Use browser session with spoofing
+            response = self.browser.get(
+                Config.ORIGINAL_RSS_URL,
+                timeout=15,
+                allow_redirects=True
+            )
+            
             response.raise_for_status()
-            logger.info(f"✅ RSS fetched: {len(response.text)} bytes")
+            
+            logger.info(f"✅ RSS fetched successfully: {len(response.text)} bytes")
+            logger.debug(f"   Response headers: {dict(response.headers)}")
+            
             return response.text
+            
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"❌ HTTP Error {e.response.status_code}: {e}")
+            logger.error(f"   Response: {e.response.text[:200]}")
+            return None
+        except requests.exceptions.Timeout:
+            logger.error(f"❌ Timeout fetching RSS (exceeded 15s)")
+            return None
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"❌ Connection error: {e}")
+            return None
         except Exception as e:
             logger.error(f"❌ RSS fetch failed: {e}")
             return None
@@ -341,7 +431,7 @@ class RSSFeedProcessor:
                 logger.info(f"📦 Using cached feed ({int(age)}s old)")
                 return self.cache
         
-        # Fetch original feed
+        # Fetch original feed (with browser spoofing)
         original_rss = self.fetch_original_feed()
         if not original_rss:
             logger.error("❌ Cannot generate feed: fetch failed")
@@ -377,6 +467,11 @@ class RSSFeedProcessor:
         
         logger.info(f"✅ Feed generated: {len(optimized_items)} items")
         return rss_xml
+    
+    def __del__(self):
+        """Cleanup browser session"""
+        if hasattr(self, 'browser'):
+            self.browser.close()
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -395,6 +490,7 @@ def home():
         "uptime": f"{uptime // 3600}h {(uptime % 3600) // 60}m",
         "feed_url": f"{os.getenv('RENDER_EXTERNAL_URL', 'http://localhost:10000')}/feed",
         "ai_enabled": gemini_optimizer.enabled,
+        "browser_spoofing": "Chrome 120.0 (Windows 10)",
         "cache_age": f"{int(time.time() - rss_processor.cache_time)}s" if rss_processor.cache_time else "none",
         "original_rss": Config.ORIGINAL_RSS_URL
     })
@@ -405,7 +501,8 @@ def health():
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "ai": "enabled" if gemini_optimizer.enabled else "disabled"
+        "ai": "enabled" if gemini_optimizer.enabled else "disabled",
+        "browser": "Chrome/120.0"
     })
 
 @app.route('/feed')
@@ -420,7 +517,7 @@ def feed():
         if not rss_xml:
             logger.error("❌ Feed generation failed")
             return Response(
-                "<?xml version='1.0'?><error>Feed temporarily unavailable</error>",
+                "<?xml version='1.0'?><e>Feed temporarily unavailable</e>",
                 mimetype='application/xml',
                 status=503
             )
@@ -438,7 +535,7 @@ def feed():
     except Exception as e:
         logger.error(f"❌ Feed endpoint error: {e}")
         return Response(
-            f"<?xml version='1.0'?><error>{str(e)}</error>",
+            f"<?xml version='1.0'?><e>{str(e)}</e>",
             mimetype='application/xml',
             status=500
         )
@@ -454,7 +551,7 @@ def refresh():
             return jsonify({
                 "success": True,
                 "message": "Feed refreshed successfully",
-                "items": len(rss_processor.parse_feed_items(rss_xml))
+                "items": rss_xml.count('<item>')
             })
         else:
             return jsonify({
@@ -490,6 +587,7 @@ def main():
         logger.info("=" * 60)
         logger.info(f"🚀 {Config.APP_NAME} v{Config.VERSION}")
         logger.info(f"🤖 AI: Google Gemini ({'✅ Enabled' if gemini_optimizer.enabled else '❌ Disabled'})")
+        logger.info(f"🌐 Browser: Chrome 120.0 (Windows 10) - Spoofing Active")
         logger.info(f"📡 Source RSS: {Config.ORIGINAL_RSS_URL}")
         logger.info(f"⏰ Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("=" * 60)
@@ -503,7 +601,7 @@ def main():
         SelfPingService()
         
         # Pre-generate first feed
-        logger.info("🔄 Pre-generating initial feed...")
+        logger.info("🔄 Pre-generating initial feed (with browser spoofing)...")
         rss_processor.get_optimized_feed(force_refresh=True)
         
         logger.info(f"🌐 Starting Waitress server on port {Config.FLASK_PORT}...")
@@ -512,6 +610,7 @@ def main():
         logger.info("=" * 60)
         logger.info(f"📡 Feed URL: {os.getenv('RENDER_EXTERNAL_URL', f'http://localhost:{Config.FLASK_PORT}')}/feed")
         logger.info("📝 Use this URL in IFTTT RSS trigger")
+        logger.info("🎭 Browser spoofing: Chrome/120.0 on Windows 10")
         logger.info("=" * 60)
         
         serve(
