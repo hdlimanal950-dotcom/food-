@@ -1,26 +1,39 @@
 #!/usr/bin/env python3
 """
-Reddit RSS Bot v1.1.0
+Reddit RSS Bot v1.1.1
 ✅ Auto-posts to Reddit via RSS + IFTTT
 ✅ Google Gemini AI for title/description optimization
 ✅ Dynamic links to avoid spam detection
 ✅ Professional RSS feed generation
-✅ NEW: Browser spoofing to bypass rss.app detection
+✅ Browser spoofing to bypass rss.app detection
+✅ FIXED: Removed deprecated DefaultCookiePolicy
+✅ FIXED: Updated to google-genai (new package name)
 """
 import os, sys, json, time, logging, hashlib, random
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from xml.etree import ElementTree as ET
 import requests
-import google.generativeai as genai
 from flask import Flask, Response, jsonify
 from waitress import serve
 from logging.handlers import RotatingFileHandler
 from urllib.parse import urlparse, urlencode
 
+# Use new google-genai package (suppresses FutureWarning)
+try:
+    import google.genai as genai
+    GENAI_AVAILABLE = True
+except ImportError:
+    # Fallback to old package if new one not installed
+    try:
+        import google.generativeai as genai
+        GENAI_AVAILABLE = True
+    except ImportError:
+        GENAI_AVAILABLE = False
+
 class Config:
     APP_NAME = "Reddit RSS Bot"
-    VERSION = "1.1.0"
+    VERSION = "1.1.1"
     FLASK_HOST = "0.0.0.0"
     FLASK_PORT = int(os.getenv("PORT", 10000))
     
@@ -112,9 +125,6 @@ class BrowserSession:
         # Set default headers
         self.session.headers.update(Config.BROWSER_HEADERS)
         
-        # Enable automatic cookie handling
-        self.session.cookies.set_policy(requests.cookies.DefaultCookiePolicy())
-        
         # Configure connection pooling for realistic behavior
         adapter = requests.adapters.HTTPAdapter(
             pool_connections=10,
@@ -154,11 +164,18 @@ class GeminiOptimizer:
         if not Config.GEMINI_API_KEY:
             logger.warning("⚠️ GEMINI_API_KEY not set - using fallback mode")
             self.enabled = False
+        elif not GENAI_AVAILABLE:
+            logger.warning("⚠️ google-genai package not installed - using fallback mode")
+            self.enabled = False
         else:
-            genai.configure(api_key=Config.GEMINI_API_KEY)
-            self.model = genai.GenerativeModel('gemini-pro')
-            self.enabled = True
-            logger.info("✅ Gemini AI initialized")
+            try:
+                genai.configure(api_key=Config.GEMINI_API_KEY)
+                self.model = genai.GenerativeModel('gemini-pro')
+                self.enabled = True
+                logger.info("✅ Gemini AI initialized")
+            except Exception as e:
+                logger.error(f"❌ Gemini initialization failed: {e}")
+                self.enabled = False
     
     def optimize_title(self, original_title: str) -> str:
         """Optimize title for Reddit engagement"""
@@ -259,7 +276,8 @@ class RSSFeedProcessor:
             
         except requests.exceptions.HTTPError as e:
             logger.error(f"❌ HTTP Error {e.response.status_code}: {e}")
-            logger.error(f"   Response: {e.response.text[:200]}")
+            if hasattr(e, 'response') and e.response is not None:
+                logger.error(f"   Response: {e.response.text[:200]}")
             return None
         except requests.exceptions.Timeout:
             logger.error(f"❌ Timeout fetching RSS (exceeded 15s)")
