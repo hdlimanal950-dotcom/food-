@@ -42,6 +42,7 @@ class Config:
     LOG_BACKUP_COUNT = 3
     SELF_PING_ENABLED = True
     SELF_PING_INTERVAL = 840
+    REQUEST_TIMEOUT = 30  # زيادة وقت الانتظار
 
 def setup_logging():
     logger = logging.getLogger(Config.APP_NAME)
@@ -68,21 +69,15 @@ class AdvancedBrowserSession:
     
     def _setup_advanced_session(self):
         """Setup ultra-realistic Chrome browser"""
-        # Rotate User-Agents for variety
-        user_agents = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        ]
-        self.user_agent = random.choice(user_agents)
+        # استخدام هوية متصفح حديث ثابتة (Chrome 121)
+        self.user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
         
-        # Enhanced headers
+        # تحسين الهوية لمنع اكتشاف الطلبات الآلية
         self.headers = {
             'User-Agent': self.user_agent,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
+            'Accept-Encoding': 'identity',  # طلب بيانات غير مضغوطة
             'DNT': '1',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
@@ -90,11 +85,14 @@ class AdvancedBrowserSession:
             'Sec-Fetch-Mode': 'navigate',
             'Sec-Fetch-Site': 'cross-site',
             'Sec-Fetch-User': '?1',
-            'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="121", "Google Chrome";v="121"',
             'sec-ch-ua-mobile': '?0',
             'sec-ch-ua-platform': '"Windows"',
             'Pragma': 'no-cache',
-            'Cache-Control': 'no-cache'
+            'Cache-Control': 'no-cache',
+            'Origin': 'https://rss.app',
+            'Referer': 'https://rss.app/',
+            'TE': 'trailers'  # إضافة لتحسين التوافق
         }
         
         self.session.headers.update(self.headers)
@@ -105,7 +103,7 @@ class AdvancedBrowserSession:
         
         retry_strategy = Retry(
             total=5,
-            backoff_factor=1,
+            backoff_factor=2,  # زيادة وقت الانتظار بين المحاولات
             status_forcelist=[403, 429, 500, 502, 503, 504],
             allowed_methods=["HEAD", "GET", "OPTIONS"]
         )
@@ -116,38 +114,33 @@ class AdvancedBrowserSession:
     
     def get(self, url: str, **kwargs) -> requests.Response:
         """GET with advanced anti-detection"""
-        # Random realistic delay (1-3 seconds)
-        time.sleep(random.uniform(1.0, 3.0))
+        # زيادة وقت الانتظار لتجنب مشكلة النوم العميق (5-8 ثواني)
+        time.sleep(random.uniform(5.0, 8.0))
         
-        # Add varied referers
-        referers = [
-            'https://www.google.com/',
-            'https://www.google.com/search?q=rss+feeds',
-            'https://feedly.com/',
-            'https://www.bing.com/'
-        ]
-        
+        # إضافة مرجع ثابت ومتسق
         if 'headers' not in kwargs:
             kwargs['headers'] = {}
         
-        kwargs['headers']['Referer'] = random.choice(referers)
-        
-        # Disable automatic redirects first visit
+        kwargs['headers']['Referer'] = 'https://rss.app/'
         kwargs.setdefault('allow_redirects', True)
-        kwargs.setdefault('timeout', 20)
+        kwargs.setdefault('timeout', Config.REQUEST_TIMEOUT)  # استخدام الوقت الجديد
         
-        # Add cookies to appear like returning visitor
+        # إضافة كوكيز محسنة لمظهر الزائر المتكرر
         self.session.cookies.set('visited', 'true', domain='.rss.app')
+        self.session.cookies.set('sessionid', hashlib.md5(str(time.time()).encode()).hexdigest()[:16])
         
         logger.debug(f"🌐 Fetching: {url}")
         logger.debug(f"   User-Agent: {self.user_agent[:50]}...")
-        logger.debug(f"   Referer: {kwargs['headers']['Referer']}")
+        logger.debug(f"   Accept-Encoding: {self.headers['Accept-Encoding']}")
         
-        response = self.session.get(url, **kwargs)
-        
-        logger.info(f"✅ Response: {response.status_code} ({len(response.content)} bytes)")
-        
-        return response
+        try:
+            response = self.session.get(url, **kwargs)
+            logger.info(f"✅ Response: {response.status_code} ({len(response.content)} bytes)")
+            return response
+        except requests.exceptions.Timeout:
+            logger.warning(f"⚠️ Timeout fetching {url}, retrying...")
+            time.sleep(3)
+            return self.session.get(url, **kwargs)
     
     def close(self):
         self.session.close()
@@ -211,11 +204,19 @@ class RSSProcessor:
             response = self.browser.get(Config.ORIGINAL_RSS_URL)
             response.raise_for_status()
             
-            # Verify it's XML
-            if 'xml' not in response.headers.get('Content-Type', '').lower():
-                logger.warning(f"⚠️ Unexpected content type: {response.headers.get('Content-Type')}")
+            # التحقق من نوع المحتوى مع تسامح أكبر
+            content_type = response.headers.get('Content-Type', '').lower()
+            if not ('xml' in content_type or 'text' in content_type or 'rss' in content_type):
+                logger.warning(f"⚠️ Unexpected content type: {content_type}")
+                # لا نوقف العملية، نستمر في المعالجة
             
             logger.info(f"✅ RSS fetched: {len(response.text)} bytes")
+            
+            # التحقق من أن البيانات ليست فارغة
+            if len(response.text.strip()) < 100:
+                logger.warning("⚠️ Response seems too short, might be blocked")
+                return None
+                
             return response.text
         except requests.exceptions.HTTPError as e:
             logger.error(f"❌ HTTP {e.response.status_code}: {e}")
@@ -312,11 +313,17 @@ class RSSProcessor:
         
         xml = self.fetch_feed()
         if not xml:
-            return self.cache
+            if self.cache:
+                logger.info("⚠️ Using cached feed due to fetch failure")
+                return self.cache
+            return None
         
         items = self.parse_items(xml)
         if not items:
-            return self.cache
+            if self.cache:
+                logger.info("⚠️ Using cached feed due to parse failure")
+                return self.cache
+            return None
         
         optimized = []
         for i, item in enumerate(items):
@@ -327,7 +334,10 @@ class RSSProcessor:
                 logger.error(f"❌ Optimize item {i}: {e}")
         
         if not optimized:
-            return self.cache
+            if self.cache:
+                logger.info("⚠️ Using cached feed due to optimization failure")
+                return self.cache
+            return None
         
         feed_xml = self.generate_xml(optimized)
         self.cache = feed_xml
@@ -350,7 +360,8 @@ def home():
         "uptime": f"{uptime//3600}h{(uptime%3600)//60}m",
         "feed_url": f"{os.getenv('RENDER_EXTERNAL_URL', 'http://localhost:10000')}/feed",
         "ai": optimizer.enabled,
-        "cache": f"{int(time.time()-processor.cache_time)}s" if processor.cache_time else "none"
+        "cache": f"{int(time.time()-processor.cache_time)}s" if processor.cache_time else "none",
+        "timeout": Config.REQUEST_TIMEOUT
     })
 
 @app.route('/health')
@@ -364,7 +375,10 @@ def feed():
         xml = processor.get_feed()
         if not xml:
             return Response("<?xml version='1.0'?><e>Unavailable</e>", mimetype='application/xml', status=503)
-        return Response(xml, mimetype='application/xml', headers={'Cache-Control': f'public, max-age={Config.CACHE_DURATION}'})
+        return Response(xml, mimetype='application/xml', headers={
+            'Cache-Control': f'public, max-age={Config.CACHE_DURATION}',
+            'X-RSS-Source': 'Reddit RSS Bot v1.2.0'
+        })
     except Exception as e:
         logger.error(f"❌ Feed error: {e}")
         return Response(f"<?xml version='1.0'?><e>{str(e)}</e>", mimetype='application/xml', status=500)
@@ -387,16 +401,20 @@ class SelfPing:
     def _loop(self, url):
         while True:
             time.sleep(Config.SELF_PING_INTERVAL)
-            try: requests.get(f"{url}/health", timeout=10)
-            except: pass
+            try: 
+                requests.get(f"{url}/health", timeout=10)
+                logger.debug("✅ Self-ping successful")
+            except Exception as e: 
+                logger.debug(f"⚠️ Self-ping failed: {e}")
 
 def main():
     try:
         logger.info("="*60)
         logger.info(f"🚀 {Config.APP_NAME} v{Config.VERSION}")
         logger.info(f"🤖 AI: {'✅ Active' if optimizer.enabled else '❌ Disabled'}")
-        logger.info(f"🌐 Browser: Advanced spoofing")
+        logger.info(f"🌐 Browser: Enhanced identity spoofing (Chrome 121)")
         logger.info(f"📡 RSS: {Config.ORIGINAL_RSS_URL}")
+        logger.info(f"⏱️  Request timeout: {Config.REQUEST_TIMEOUT}s")
         logger.info("="*60)
         
         SelfPing()
