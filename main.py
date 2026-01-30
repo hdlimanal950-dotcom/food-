@@ -168,7 +168,7 @@ class GeminiOptimizer:
         
         try:
             genai.configure(api_key=Config.GEMINI_API_KEY)
-            self.model = genai.GenerativeModel('gemini-pro')
+            self.model = genai.GenerativeModel('gemini-1.5-flash')
             test = self.model.generate_content("Hi")
             if test and test.text:
                 self.enabled = True
