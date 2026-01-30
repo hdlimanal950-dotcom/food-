@@ -1,8 +1,9 @@
-Flask
-Werkzeug
+flask
 waitress
-google-generativeai
 requests
+google-generativeai
+selenium
+beautifulsoup4
+lxml
 urllib3
-python-dotenv
 certifi
