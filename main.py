@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-Reddit RSS Bot v1.1.1
+Reddit RSS Bot v1.1.2
 ✅ Auto-posts to Reddit via RSS + IFTTT
-✅ Google Gemini AI for title/description optimization
+✅ Google Gemini AI for title/description optimization (FIXED)
 ✅ Dynamic links to avoid spam detection
 ✅ Professional RSS feed generation
 ✅ Browser spoofing to bypass rss.app detection
-✅ FIXED: Removed deprecated DefaultCookiePolicy
-✅ FIXED: Updated to google-genai (new package name)
+✅ FIXED: Gemini AI now works with google-generativeai package
 """
 import os, sys, json, time, logging, hashlib, random
 from datetime import datetime, timedelta
@@ -19,21 +18,17 @@ from waitress import serve
 from logging.handlers import RotatingFileHandler
 from urllib.parse import urlparse, urlencode
 
-# Use new google-genai package (suppresses FutureWarning)
+# Import Gemini AI (correct way)
 try:
-    import google.genai as genai
+    import google.generativeai as genai
     GENAI_AVAILABLE = True
 except ImportError:
-    # Fallback to old package if new one not installed
-    try:
-        import google.generativeai as genai
-        GENAI_AVAILABLE = True
-    except ImportError:
-        GENAI_AVAILABLE = False
+    GENAI_AVAILABLE = False
+    genai = None
 
 class Config:
     APP_NAME = "Reddit RSS Bot"
-    VERSION = "1.1.1"
+    VERSION = "1.1.2"
     FLASK_HOST = "0.0.0.0"
     FLASK_PORT = int(os.getenv("PORT", 10000))
     
@@ -158,28 +153,53 @@ class BrowserSession:
         self.session.close()
 
 class GeminiOptimizer:
-    """Google Gemini AI for content optimization"""
+    """Google Gemini AI for content optimization - FIXED VERSION"""
     
     def __init__(self):
+        self.enabled = False
+        self.model = None
+        
+        # Check if package is available
+        if not GENAI_AVAILABLE:
+            logger.warning("⚠️ google-generativeai package not installed")
+            logger.warning("⚠️ Run: pip install google-generativeai")
+            return
+        
+        # Check if API key is set
         if not Config.GEMINI_API_KEY:
             logger.warning("⚠️ GEMINI_API_KEY not set - using fallback mode")
-            self.enabled = False
-        elif not GENAI_AVAILABLE:
-            logger.warning("⚠️ google-genai package not installed - using fallback mode")
-            self.enabled = False
-        else:
-            try:
-                genai.configure(api_key=Config.GEMINI_API_KEY)
-                self.model = genai.GenerativeModel('gemini-pro')
+            logger.warning("⚠️ Set GEMINI_API_KEY environment variable to enable AI")
+            return
+        
+        # Initialize Gemini
+        try:
+            # Configure API key
+            genai.configure(api_key=Config.GEMINI_API_KEY)
+            
+            # Create model instance
+            self.model = genai.GenerativeModel('gemini-pro')
+            
+            # Test the model with a simple prompt
+            logger.info("🧪 Testing Gemini AI connection...")
+            test_response = self.model.generate_content("Hello")
+            
+            if test_response and test_response.text:
                 self.enabled = True
-                logger.info("✅ Gemini AI initialized")
-            except Exception as e:
-                logger.error(f"❌ Gemini initialization failed: {e}")
-                self.enabled = False
+                logger.info("✅ Gemini AI initialized and working!")
+                logger.info(f"   Test response: {test_response.text[:50]}...")
+            else:
+                logger.error("❌ Gemini AI test failed - no response")
+                
+        except Exception as e:
+            logger.error(f"❌ Gemini initialization failed: {e}")
+            logger.error(f"   Error type: {type(e).__name__}")
+            logger.error(f"   Make sure GEMINI_API_KEY is valid")
+            self.enabled = False
     
     def optimize_title(self, original_title: str) -> str:
         """Optimize title for Reddit engagement"""
-        if not self.enabled:
+        if not self.enabled or not self.model:
+            logger.debug(f"⚠️ AI disabled, using original title: {original_title}")
             return original_title
         
         try:
@@ -196,23 +216,37 @@ Requirements:
 
 Return ONLY the optimized title, nothing else.'''
 
+            logger.debug(f"🤖 Sending title to Gemini: {original_title[:30]}...")
             response = self.model.generate_content(prompt)
+            
+            if not response or not response.text:
+                logger.warning("⚠️ Gemini returned empty response for title")
+                return original_title
+            
             optimized = response.text.strip()
+            
+            # Remove markdown formatting if present
+            optimized = optimized.replace('**', '').replace('*', '')
             
             # Validate length
             if len(optimized) > 250:
                 optimized = optimized[:247] + "..."
             
-            logger.info(f"✅ Title optimized: '{original_title[:30]}...' → '{optimized[:30]}...'")
+            logger.info(f"✅ Title optimized by AI")
+            logger.debug(f"   Original: {original_title[:40]}...")
+            logger.debug(f"   Optimized: {optimized[:40]}...")
+            
             return optimized
             
         except Exception as e:
             logger.error(f"❌ Gemini title optimization failed: {e}")
+            logger.debug(f"   Falling back to original title")
             return original_title
     
     def generate_description(self, title: str, original_desc: str) -> str:
         """Generate engaging Reddit-friendly description"""
-        if not self.enabled:
+        if not self.enabled or not self.model:
+            logger.debug(f"⚠️ AI disabled, using fallback description")
             return self._fallback_description(original_desc)
         
         try:
@@ -230,14 +264,25 @@ Requirements:
 
 Return ONLY the description, nothing else.'''
 
+            logger.debug(f"🤖 Generating description with Gemini...")
             response = self.model.generate_content(prompt)
+            
+            if not response or not response.text:
+                logger.warning("⚠️ Gemini returned empty response for description")
+                return self._fallback_description(original_desc)
+            
             description = response.text.strip()
             
-            logger.info(f"✅ Description generated: {len(description)} chars")
+            # Remove markdown formatting if present
+            description = description.replace('**', '').replace('*', '')
+            
+            logger.info(f"✅ Description generated by AI: {len(description)} chars")
+            
             return description
             
         except Exception as e:
             logger.error(f"❌ Gemini description failed: {e}")
+            logger.debug(f"   Falling back to original description")
             return self._fallback_description(original_desc)
     
     def _fallback_description(self, original: str) -> str:
@@ -508,6 +553,7 @@ def home():
         "uptime": f"{uptime // 3600}h {(uptime % 3600) // 60}m",
         "feed_url": f"{os.getenv('RENDER_EXTERNAL_URL', 'http://localhost:10000')}/feed",
         "ai_enabled": gemini_optimizer.enabled,
+        "ai_model": "gemini-pro" if gemini_optimizer.enabled else "disabled",
         "browser_spoofing": "Chrome 120.0 (Windows 10)",
         "cache_age": f"{int(time.time() - rss_processor.cache_time)}s" if rss_processor.cache_time else "none",
         "original_rss": Config.ORIGINAL_RSS_URL
@@ -569,7 +615,8 @@ def refresh():
             return jsonify({
                 "success": True,
                 "message": "Feed refreshed successfully",
-                "items": rss_xml.count('<item>')
+                "items": rss_xml.count('<item>'),
+                "ai_enabled": gemini_optimizer.enabled
             })
         else:
             return jsonify({
@@ -604,22 +651,25 @@ def main():
     try:
         logger.info("=" * 60)
         logger.info(f"🚀 {Config.APP_NAME} v{Config.VERSION}")
-        logger.info(f"🤖 AI: Google Gemini ({'✅ Enabled' if gemini_optimizer.enabled else '❌ Disabled'})")
+        logger.info(f"🤖 AI Engine: Google Gemini Pro")
+        logger.info(f"   Status: {'✅ ACTIVE' if gemini_optimizer.enabled else '❌ DISABLED'}")
+        if not gemini_optimizer.enabled:
+            if not GENAI_AVAILABLE:
+                logger.warning("   Reason: google-generativeai package not installed")
+                logger.warning("   Fix: pip install google-generativeai")
+            elif not Config.GEMINI_API_KEY:
+                logger.warning("   Reason: GEMINI_API_KEY not set")
+                logger.warning("   Fix: Set GEMINI_API_KEY environment variable")
         logger.info(f"🌐 Browser: Chrome 120.0 (Windows 10) - Spoofing Active")
         logger.info(f"📡 Source RSS: {Config.ORIGINAL_RSS_URL}")
         logger.info(f"⏰ Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info("=" * 60)
         
-        # Validate Gemini API key
-        if not Config.GEMINI_API_KEY:
-            logger.warning("⚠️ GEMINI_API_KEY not set - AI optimization disabled")
-            logger.warning("⚠️ Set GEMINI_API_KEY environment variable to enable AI")
-        
         # Start self-ping service
         SelfPingService()
         
         # Pre-generate first feed
-        logger.info("🔄 Pre-generating initial feed (with browser spoofing)...")
+        logger.info("🔄 Pre-generating initial feed...")
         rss_processor.get_optimized_feed(force_refresh=True)
         
         logger.info(f"🌐 Starting Waitress server on port {Config.FLASK_PORT}...")
@@ -628,7 +678,6 @@ def main():
         logger.info("=" * 60)
         logger.info(f"📡 Feed URL: {os.getenv('RENDER_EXTERNAL_URL', f'http://localhost:{Config.FLASK_PORT}')}/feed")
         logger.info("📝 Use this URL in IFTTT RSS trigger")
-        logger.info("🎭 Browser spoofing: Chrome/120.0 on Windows 10")
         logger.info("=" * 60)
         
         serve(
