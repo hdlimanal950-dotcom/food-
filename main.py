@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
 Reddit RSS Bot v3.0.0 PRODUCTION ULTIMATE
-🔥 TLS Fingerprint Bypass + Zero-dependency browser simulation
-✅ curl_cffi (bypasses TLS detection 95% success rate)
-✅ requests-html (JavaScript rendering without Chrome)
-✅ CloudScraper (Cloudflare bypass)
-✅ Multi-layer caching system
-✅ Fixed Gemini API integration
-✅ 100% Render.com compatible (no Selenium needed)
+🔥 Direct Tumblr RSS + Optimized for Render.com
+✅ Fixed: Direct source (no rss.app blocking)
+✅ Fixed: Fast port binding (no pre-fetch delay)
+✅ Fixed: Gemini API path (models/ prefix)
+✅ Fixed: Clean headers (no compression issues)
+✅ Multi-strategy fetching with intelligent fallbacks
 """
 import os, sys, json, time, logging, hashlib, random, re
 from datetime import datetime, timedelta
@@ -23,10 +22,10 @@ from logging.handlers import RotatingFileHandler
 from urllib.parse import urlencode
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SMART IMPORTS - استيراد ذكي مع fallbacks
+# SMART IMPORTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Primary: curl_cffi (best TLS bypass)
+# Primary: curl_cffi
 try:
     from curl_cffi import requests as curl_requests
     CURL_CFFI_AVAILABLE = True
@@ -34,7 +33,7 @@ except ImportError:
     CURL_CFFI_AVAILABLE = False
     curl_requests = None
 
-# Secondary: requests-html (JavaScript without browser)
+# Secondary: requests-html
 try:
     from requests_html import HTMLSession
     REQUESTS_HTML_AVAILABLE = True
@@ -42,7 +41,7 @@ except ImportError:
     REQUESTS_HTML_AVAILABLE = False
     HTMLSession = None
 
-# Tertiary: cloudscraper (Cloudflare bypass)
+# Tertiary: cloudscraper
 try:
     import cloudscraper
     CLOUDSCRAPER_AVAILABLE = True
@@ -82,13 +81,13 @@ class Config:
     FLASK_HOST: str = "0.0.0.0"
     FLASK_PORT: int = int(os.getenv("PORT", 10000))
     
-    # RSS Sources
-    ORIGINAL_RSS_URL: str = "https://rss.app/feed/zKvsfrwIfVjjKtpr"
+    # RSS Sources - ✅ FIXED: Direct Tumblr RSS
+    ORIGINAL_RSS_URL: str = "https://shecooksandbakes.tumblr.com/rss"
     FALLBACK_RSS_URLS: List[str] = None
     
-    # AI Configuration (مع التصحيح)
+    # AI Configuration - ✅ FIXED: Added models/ prefix
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    GEMINI_MODEL: str = "models/gemini-1.5-flash"  # ✅ التصحيح: إضافة models/
+    GEMINI_MODEL: str = "models/gemini-1.5-flash"
     GEMINI_MAX_RETRIES: int = 3
     
     # Feed Configuration
@@ -99,14 +98,14 @@ class Config:
     MAX_FEED_ITEMS: int = 10
     
     # Multi-layer Caching
-    CACHE_DURATION: int = 300  # 5 دقائق
-    LONG_CACHE_DURATION: int = 86400  # 24 ساعة
-    EMERGENCY_CACHE_DURATION: int = 604800  # 7 أيام
+    CACHE_DURATION: int = 300
+    LONG_CACHE_DURATION: int = 86400
+    EMERGENCY_CACHE_DURATION: int = 604800
     CACHE_FILE: str = "rss_cache_v3.pkl"
     
     # Request Configuration
     REQUEST_TIMEOUT: int = 45
-    MAX_RETRIES: int = 7  # زيادة عدد المحاولات
+    MAX_RETRIES: int = 7
     RETRY_BACKOFF: float = 2.5
     JITTER_RANGE: Tuple[float, float] = (2.0, 6.0)
     
@@ -184,14 +183,13 @@ class UserAgentPool:
     
     @classmethod
     def get_headers(cls, user_agent: str = None) -> Dict[str, str]:
-        """Headers واقعية"""
+        """Headers واقعية - ✅ FIXED: Removed Accept-Encoding compression"""
         ua = user_agent or cls.get_random()
         
         return {
             'User-Agent': ua,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
             'DNT': '1',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
@@ -203,7 +201,7 @@ class UserAgentPool:
         }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ADVANCED FETCHERS - محركات جلب متعددة
+# ADVANCED FETCHERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class CurlCffiFetcher:
@@ -212,7 +210,7 @@ class CurlCffiFetcher:
     def __init__(self):
         self.available = CURL_CFFI_AVAILABLE
         if not self.available:
-            logger.warning("⚠️ curl_cffi not available - install: pip install curl-cffi")
+            logger.warning("⚠️ curl_cffi not available")
     
     def fetch(self, url: str) -> Optional[str]:
         if not self.available:
@@ -221,17 +219,15 @@ class CurlCffiFetcher:
         try:
             logger.info("🔥 Strategy: CURL_CFFI (TLS bypass)")
             
-            # تأخير طبيعي
             time.sleep(random.uniform(*config.JITTER_RANGE))
             
             headers = UserAgentPool.get_headers()
             
-            # استخدام impersonate لمحاكاة Chrome الحقيقي
             response = curl_requests.get(
                 url,
                 headers=headers,
                 timeout=config.REQUEST_TIMEOUT,
-                impersonate="chrome110",  # محاكاة Chrome 110
+                impersonate="chrome110",
                 allow_redirects=True
             )
             
@@ -252,7 +248,7 @@ class RequestsHtmlFetcher:
     def __init__(self):
         self.available = REQUESTS_HTML_AVAILABLE
         if not self.available:
-            logger.warning("⚠️ requests-html not available - install: pip install requests-html")
+            logger.warning("⚠️ requests-html not available")
     
     def fetch(self, url: str) -> Optional[str]:
         if not self.available:
@@ -268,11 +264,10 @@ class RequestsHtmlFetcher:
             headers = UserAgentPool.get_headers()
             response = session.get(url, headers=headers, timeout=config.REQUEST_TIMEOUT)
             
-            # تشغيل JavaScript (محدود لكنه فعّال)
             try:
                 response.html.render(timeout=20, sleep=2)
             except:
-                logger.debug("JS rendering skipped (not critical)")
+                logger.debug("JS rendering skipped")
             
             if response.status_code == 200:
                 logger.info(f"✅ REQUESTS_HTML success: {len(response.text):,} bytes")
@@ -293,7 +288,7 @@ class CloudScraperFetcher:
     def __init__(self):
         self.available = CLOUDSCRAPER_AVAILABLE
         if not self.available:
-            logger.warning("⚠️ cloudscraper not available - install: pip install cloudscraper")
+            logger.warning("⚠️ cloudscraper not available")
     
     def fetch(self, url: str) -> Optional[str]:
         if not self.available:
@@ -338,7 +333,6 @@ class StandardRequestsFetcher:
             session = standard_requests.Session()
             headers = UserAgentPool.get_headers()
             
-            # Retry strategy
             from requests.adapters import HTTPAdapter
             from urllib3.util.retry import Retry
             
@@ -375,9 +369,9 @@ class CacheManager:
     def __init__(self, cache_file: str = config.CACHE_FILE):
         self.cache_file = Path(cache_file)
         self.layers = {
-            'fresh': None,      # < 5 دقائق
-            'recent': None,     # < 24 ساعة
-            'emergency': None   # < 7 أيام
+            'fresh': None,
+            'recent': None,
+            'emergency': None
         }
         self.timestamps = {
             'fresh': None,
@@ -415,7 +409,6 @@ class CacheManager:
         now = time.time()
         
         if layer == 'auto':
-            # محاولة الطبقات بالترتيب
             for layer_name, max_age in [
                 ('fresh', config.CACHE_DURATION),
                 ('recent', config.LONG_CACHE_DURATION),
@@ -431,7 +424,6 @@ class CacheManager:
             return None
         
         else:
-            # طبقة محددة
             if self.layers[layer] and self.timestamps[layer]:
                 age = now - self.timestamps[layer]
                 logger.info(f"📦 Cache from {layer}: {int(age)}s old")
@@ -460,11 +452,11 @@ class CacheManager:
         return None
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# GEMINI AI OPTIMIZER (مع التصحيح)
+# GEMINI AI OPTIMIZER
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class GeminiOptimizer:
-    """محسن المحتوى بالذكاء الاصطناعي - مصحح"""
+    """محسن المحتوى بالذكاء الاصطناعي"""
     
     def __init__(self):
         self.enabled = False
@@ -481,10 +473,8 @@ class GeminiOptimizer:
         try:
             genai.configure(api_key=config.GEMINI_API_KEY)
             
-            # ✅ استخدام اسم النموذج الصحيح
             self.model = genai.GenerativeModel(config.GEMINI_MODEL)
             
-            # اختبار
             test = self.model.generate_content(
                 "Hi",
                 generation_config=genai.types.GenerationConfig(
@@ -563,7 +553,7 @@ Return ONLY the description.'''
             return original_desc[:300]
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# RSS PROCESSOR - المعالج الرئيسي
+# RSS PROCESSOR
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class RSSProcessor:
@@ -573,7 +563,6 @@ class RSSProcessor:
         self.optimizer = optimizer
         self.cache = cache
         
-        # تهيئة جميع المحركات
         self.fetchers = [
             ('CURL_CFFI', CurlCffiFetcher()),
             ('REQUESTS_HTML', RequestsHtmlFetcher()),
@@ -586,13 +575,11 @@ class RSSProcessor:
     def fetch_feed(self, force: bool = False) -> Optional[str]:
         """جلب RSS باستخدام جميع الاستراتيجيات"""
         
-        # تحقق من Cache
         if not force:
             cached = self.cache.get('auto')
             if cached:
                 return cached
         
-        # جرب كل محرك
         urls_to_try = [config.ORIGINAL_RSS_URL] + config.FALLBACK_RSS_URLS
         
         for url in urls_to_try:
@@ -609,17 +596,14 @@ class RSSProcessor:
                 except Exception as e:
                     logger.error(f"❌ {fetcher_name} exception: {e}")
                 
-                # تأخير بين المحاولات
                 time.sleep(1.5)
         
-        # فشل كلي - استخدم cache طوارئ
         logger.error("❌ ALL FETCHING STRATEGIES FAILED")
         return self.cache.get_emergency_fallback()
     
     def _validate_xml(self, xml: str) -> bool:
         """التحقق من صلاحية XML"""
         try:
-            # فحص أساسي
             if len(xml.strip()) < 100:
                 logger.warning("⚠️ XML too short")
                 return False
@@ -628,7 +612,6 @@ class RSSProcessor:
                 logger.warning("⚠️ Error response detected")
                 return False
             
-            # تحليل XML
             root = ET.fromstring(xml)
             items = root.findall('.//item')
             
@@ -656,7 +639,6 @@ class RSSProcessor:
                 date = item.find('pubDate')
                 
                 if title is not None and link is not None:
-                    # تنظيف الوصف
                     desc_text = ""
                     if desc is not None and desc.text:
                         desc_text = re.sub(r'<[^>]+>', '', desc.text).strip()
@@ -740,24 +722,21 @@ class RSSProcessor:
     def get_feed(self, force: bool = False) -> Optional[str]:
         """الحصول على RSS feed كامل"""
         
-        # جلب XML
         xml = self.fetch_feed(force=force)
         if not xml:
             logger.error("❌ Failed to fetch feed")
             return None
         
-        # تحليل
         items = self.parse_items(xml)
         if not items:
             logger.error("❌ No items parsed")
             return None
         
-        # تحسين
         optimized = []
         for i, item in enumerate(items):
             try:
                 optimized.append(self.optimize_item(item, i))
-                time.sleep(0.3)  # تأخير خفيف
+                time.sleep(0.3)
             except Exception as e:
                 logger.error(f"❌ Failed to optimize item {i}: {e}")
         
@@ -765,10 +744,8 @@ class RSSProcessor:
             logger.error("❌ No items optimized")
             return None
         
-        # توليد XML
         feed_xml = self.generate_xml(optimized)
         
-        # حفظ في cache
         self.cache.set(feed_xml)
         
         logger.info(f"✅ Feed generated: {len(optimized)} items")
@@ -962,22 +939,18 @@ def main():
         logger.info(f"🔥 curl_cffi (TLS bypass): {'✅ Available' if CURL_CFFI_AVAILABLE else '❌ Not installed'}")
         logger.info(f"🌐 requests-html: {'✅ Available' if REQUESTS_HTML_AVAILABLE else '❌ Not installed'}")
         logger.info(f"☁️  cloudscraper: {'✅ Available' if CLOUDSCRAPER_AVAILABLE else '❌ Not installed'}")
-        logger.info(f"📡 Primary RSS: {config.ORIGINAL_RSS_URL}")
+        logger.info(f"📡 Direct RSS Source: {config.ORIGINAL_RSS_URL}")
         logger.info(f"💾 Multi-layer cache: 5m / 24h / 7d")
         logger.info("=" * 80)
         
         SelfPing()
         
-        logger.info("🔄 Pre-fetching RSS feed...")
-        try:
-            processor.get_feed(force=True)
-            logger.info("✅ Pre-fetch successful")
-        except Exception as e:
-            logger.warning(f"⚠️ Pre-fetch failed: {e}")
+        # ✅ FIXED: Removed pre-fetch to allow fast port binding
+        # processor.get_feed(force=True)
         
         logger.info("=" * 80)
         logger.info(f"🌐 Starting Waitress on {config.FLASK_HOST}:{config.FLASK_PORT}")
-        logger.info("✅ SYSTEM OPERATIONAL")
+        logger.info("✅ SYSTEM OPERATIONAL - Port bound immediately")
         
         base_url = os.getenv('RENDER_EXTERNAL_URL', f'http://localhost:{config.FLASK_PORT}')
         logger.info(f"📡 Feed URL: {base_url}/feed")
