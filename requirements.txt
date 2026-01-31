@@ -1,8 +1,10 @@
 flask
 waitress
 requests
+curl-cffi
+requests-html
+cloudscraper
 google-generativeai
-selenium
 beautifulsoup4
 lxml
 urllib3
